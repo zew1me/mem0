@@ -31,6 +31,7 @@ from routers import auth as auth_router
 from routers import api_keys as api_keys_router
 from routers import entities as entities_router
 from routers import requests as requests_router
+from routers.entities import TYPE_TO_FIELD, EntityType, list_entities_impl
 from schemas import MessageResponse
 from server_state import get_current_config, get_memory_instance, initialize_state, set_session_factory, update_config
 
@@ -67,6 +68,25 @@ MCP_OPERATION_IDS = [
     "list_entities",
     "delete_entity",
 ]
+
+_MCP_SERVER_DESCRIPTION = (
+    "Persistent memory layer for AI agents and assistants. "
+    "Stores, retrieves, and manages memories scoped by user, agent, or session.\n\n"
+    "## Authentication\n"
+    "Every tool call requires authentication. Pass the X-API-Key header set to your API key, "
+    "or an Authorization: Bearer <jwt> header. Calls without a valid credential return 401.\n\n"
+    "## Identity Model\n"
+    "All memory operations are scoped to one identity field. Choose exactly one per call:\n"
+    "- user_id: person-scoped, persists across all sessions and agents\n"
+    "- agent_id: agent-role-scoped, shared across all users of that agent\n"
+    "- run_id: session-scoped, ephemeral per conversation turn\n\n"
+    "## Typical Workflow\n"
+    "1. Call search_memories at the start of each turn to retrieve relevant past context.\n"
+    "2. Call add_memory when the user shares facts, preferences, goals, or corrections.\n"
+    "3. Use get_memories to list what is stored; delete_memory or delete_all_memories to forget.\n"
+    "4. memory_history shows the evolution of a specific memory over time.\n"
+    "5. list_entities / delete_entity manage identity-level records.\n"
+)
 
 
 def _warn_if_unconfigured() -> None:
@@ -183,13 +203,25 @@ class Message(BaseModel):
     content: str = Field(..., description="Message content.")
 
 
+_IDENTITY_FIELDS_DESC = (
+    "Provide exactly one: user_id (person-scoped, persists across sessions), "
+    "agent_id (agent-role-scoped), or run_id (session-scoped, ephemeral)."
+)
+
+
 class MemoryCreate(BaseModel):
-    messages: List[Message] = Field(..., description="List of messages to store.")
-    user_id: Optional[str] = None
-    agent_id: Optional[str] = None
-    run_id: Optional[str] = None
+    messages: List[Message] = Field(
+        ...,
+        description="Conversation messages to extract memories from. Include recent turns for best extraction quality.",
+    )
+    user_id: Optional[str] = Field(None, description="Scopes memory to a specific person. Persists across all sessions.")
+    agent_id: Optional[str] = Field(None, description="Scopes memory to an agent role. Shared across all users of that agent.")
+    run_id: Optional[str] = Field(None, description="Scopes memory to a single conversation session. Ephemeral.")
     metadata: Optional[Dict[str, Any]] = None
-    infer: Optional[bool] = Field(None, description="Whether to extract facts from messages. Defaults to True.")
+    infer: Optional[bool] = Field(
+        None,
+        description="When True (default), the server extracts discrete facts from messages. Set False to store verbatim.",
+    )
     memory_type: Optional[str] = Field(None, description="Type of memory to store (e.g. 'core').")
     prompt: Optional[str] = Field(None, description="Custom prompt to use for fact extraction.")
 
@@ -200,13 +232,51 @@ class MemoryUpdate(BaseModel):
 
 
 class SearchRequest(BaseModel):
-    query: str = Field(..., description="Search query.")
-    user_id: Optional[str] = None
-    run_id: Optional[str] = None
-    agent_id: Optional[str] = None
+    query: str = Field(..., description="Natural language search query.")
+    user_id: Optional[str] = Field(None, description="Scopes search to a specific person.")
+    run_id: Optional[str] = Field(None, description="Scopes search to a specific conversation session.")
+    agent_id: Optional[str] = Field(None, description="Scopes search to an agent role.")
     filters: Optional[Dict[str, Any]] = None
     top_k: Optional[int] = Field(None, description="Maximum number of results to return.")
-    threshold: Optional[float] = Field(None, description="Minimum similarity score for results.")
+    threshold: Optional[float] = Field(None, description="Minimum similarity score for results (0.0–1.0).")
+
+
+# MCP shim request models — POST body wrappers for operations the REST API exposes via GET/PUT/DELETE
+
+
+class MemoryListRequest(BaseModel):
+    user_id: Optional[str] = Field(None, description="Scopes listing to a specific person.")
+    agent_id: Optional[str] = Field(None, description="Scopes listing to an agent role.")
+    run_id: Optional[str] = Field(None, description="Scopes listing to a conversation session.")
+
+
+class MemoryFetchRequest(BaseModel):
+    memory_id: str = Field(..., description="ID of the memory to retrieve. Obtain from add_memory, search_memories, or get_memories.")
+
+
+class MemoryHistoryRequest(BaseModel):
+    memory_id: str = Field(..., description="ID of the memory whose change history to retrieve.")
+
+
+class MemoryUpdateMCPRequest(BaseModel):
+    memory_id: str = Field(..., description="ID of the memory to update. Obtain from search_memories or get_memories.")
+    text: str = Field(..., description="New text content for the memory.")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Optional metadata to update.")
+
+
+class MemoryDeleteRequest(BaseModel):
+    memory_id: str = Field(..., description="ID of the memory to delete. Obtain from search_memories or get_memories.")
+
+
+class MemoryDeleteAllRequest(BaseModel):
+    user_id: Optional[str] = Field(None, description="Delete all memories for this person.")
+    agent_id: Optional[str] = Field(None, description="Delete all memories for this agent role.")
+    run_id: Optional[str] = Field(None, description="Delete all memories for this conversation session.")
+
+
+class EntityDeleteRequest(BaseModel):
+    entity_type: EntityType = Field(..., description="Type of entity: 'user', 'agent', or 'run'.")
+    entity_id: str = Field(..., description="ID of the entity whose memories should all be deleted.")
 
 
 class GenerateInstructionsRequest(BaseModel):
@@ -365,7 +435,18 @@ def generate_instructions(req: GenerateInstructionsRequest, _auth=Depends(verify
 
 @app.post("/memories", summary="Create memories", operation_id="add_memory")
 def add_memory(memory_create: MemoryCreate, _auth=Depends(verify_auth)):
-    """Store new memories."""
+    """
+    Call this tool whenever the user shares personal preferences, facts, goals, or any context
+    worth retaining across future sessions. Requires auth: X-API-Key header (or Authorization: Bearer <jwt>).
+
+    Identity: provide exactly one of user_id (person-scoped), agent_id (agent-scoped),
+    or run_id (session-scoped). Use user_id for persistent personal memory; run_id for
+    ephemeral within-session context.
+
+    The server infers discrete memories from the messages list by default (infer=True).
+    Set infer=False to store message content verbatim without extraction.
+    Returns a list of created/updated memory records including their IDs.
+    """
     if not any([memory_create.user_id, memory_create.agent_id, memory_create.run_id]):
         raise HTTPException(status_code=400, detail="At least one identifier (user_id, agent_id, run_id) is required.")
 
@@ -402,7 +483,7 @@ def _list_all_memories(limit: int = ALL_MEMORIES_LIMIT) -> Dict[str, Any]:
     return {"results": [_serialize_memory(row) for row in rows]}
 
 
-@app.get("/memories", summary="Get memories", operation_id="get_memories")
+@app.get("/memories", summary="Get memories", operation_id="get_memories_rest")
 def get_all_memories(
     user_id: Optional[str] = None,
     run_id: Optional[str] = None,
@@ -421,7 +502,7 @@ def get_all_memories(
         raise upstream_error()
 
 
-@app.get("/memories/{memory_id}", summary="Get a memory", operation_id="get_memory")
+@app.get("/memories/{memory_id}", summary="Get a memory", operation_id="get_memory_rest")
 def get_memory(memory_id: str, _auth=Depends(verify_auth)):
     """Retrieve a specific memory by ID."""
     try:
@@ -432,7 +513,14 @@ def get_memory(memory_id: str, _auth=Depends(verify_auth)):
 
 @app.post("/search", summary="Search memories", operation_id="search_memories")
 def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
-    """Search for memories based on a query."""
+    """
+    Call this tool BEFORE generating any response when the user's query may benefit from past context.
+    Requires auth: X-API-Key header (or Authorization: Bearer <jwt>).
+
+    Identity: provide the same identifier used when storing memories (user_id, agent_id, or run_id).
+    Returns semantically ranked results; use the 'memory' field from each result as context to inject
+    into your response. At least one identity field is required.
+    """
     if not any([search_req.user_id, search_req.agent_id, search_req.run_id]):
         raise HTTPException(status_code=400, detail="At least one identifier (user_id, agent_id, run_id) is required.")
     try:
@@ -446,7 +534,7 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
         raise upstream_error()
 
 
-@app.put("/memories/{memory_id}", summary="Update a memory", operation_id="update_memory")
+@app.put("/memories/{memory_id}", summary="Update a memory", operation_id="update_memory_rest")
 def update_memory(memory_id: str, updated_memory: MemoryUpdate, _auth=Depends(verify_auth)):
     """Update an existing memory."""
     try:
@@ -457,7 +545,7 @@ def update_memory(memory_id: str, updated_memory: MemoryUpdate, _auth=Depends(ve
         raise upstream_error()
 
 
-@app.get("/memories/{memory_id}/history", summary="Get memory history", operation_id="memory_history")
+@app.get("/memories/{memory_id}/history", summary="Get memory history", operation_id="memory_history_rest")
 def memory_history(memory_id: str, _auth=Depends(verify_auth)):
     """Retrieve memory history."""
     try:
@@ -470,7 +558,7 @@ def memory_history(memory_id: str, _auth=Depends(verify_auth)):
     "/memories/{memory_id}",
     summary="Delete a memory",
     response_model=MessageResponse,
-    operation_id="delete_memory",
+    operation_id="delete_memory_rest",
 )
 def delete_memory(memory_id: str, _auth=Depends(verify_auth)):
     """Delete a specific memory by ID."""
@@ -485,7 +573,7 @@ def delete_memory(memory_id: str, _auth=Depends(verify_auth)):
     "/memories",
     summary="Delete all memories",
     response_model=MessageResponse,
-    operation_id="delete_all_memories",
+    operation_id="delete_all_memories_rest",
 )
 def delete_all_memories(
     user_id: Optional[str] = None,
@@ -522,10 +610,151 @@ def home():
     return RedirectResponse(url="/docs")
 
 
+# ---------------------------------------------------------------------------
+# MCP tool shims — POST wrappers for REST operations that use GET/PUT/DELETE.
+# fastapi-mcp only maps POST routes to MCP tools; these shims give every
+# operation a JSON-body POST surface while the original REST routes remain
+# unchanged for HTTP API clients.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/mcp-tools/memories/list", summary="List memories (MCP)", operation_id="get_memories", tags=["mcp-tools"])
+def mcp_get_memories(req: MemoryListRequest, _auth=Depends(verify_auth)):
+    """
+    List all stored memories for a given identity. Use this to show the user what is remembered,
+    or to collect memory IDs before updating or deleting specific entries.
+    Requires auth: X-API-Key header (or Authorization: Bearer <jwt>).
+
+    Provide at least one identity field: user_id (person), agent_id (agent role), or run_id (session).
+    Omit all three to list every memory regardless of identity.
+    Returns a 'results' array; each item has 'id', 'memory', and identity fields.
+    """
+    try:
+        if not any([req.user_id, req.agent_id, req.run_id]):
+            return _list_all_memories()
+        filters = {k: v for k, v in {"user_id": req.user_id, "agent_id": req.agent_id, "run_id": req.run_id}.items() if v is not None}
+        return get_memory_instance().get_all(filters=filters)
+    except Exception:
+        raise upstream_error()
+
+
+@app.post("/mcp-tools/memories/fetch", summary="Get a memory (MCP)", operation_id="get_memory", tags=["mcp-tools"])
+def mcp_get_memory(req: MemoryFetchRequest, _auth=Depends(verify_auth)):
+    """
+    Retrieve a single memory by its ID. Use when you need the full details of a specific memory
+    whose ID you obtained from add_memory, search_memories, or get_memories.
+    Requires auth: X-API-Key header (or Authorization: Bearer <jwt>).
+
+    Returns the memory object including its text, metadata, and timestamps.
+    """
+    try:
+        return get_memory_instance().get(req.memory_id)
+    except Exception:
+        raise upstream_error()
+
+
+@app.post("/mcp-tools/memories/update", summary="Update a memory (MCP)", operation_id="update_memory", tags=["mcp-tools"])
+def mcp_update_memory(req: MemoryUpdateMCPRequest, _auth=Depends(verify_auth)):
+    """
+    Update the text content of an existing memory. Use when the user corrects or refines
+    a previously stored fact. Requires auth: X-API-Key header (or Authorization: Bearer <jwt>).
+
+    memory_id must be obtained from a prior search_memories or get_memories call.
+    Returns the updated memory record.
+    """
+    try:
+        return get_memory_instance().update(memory_id=req.memory_id, data=req.text, metadata=req.metadata)
+    except Exception:
+        raise upstream_error()
+
+
+@app.post("/mcp-tools/memories/delete", summary="Delete a memory (MCP)", operation_id="delete_memory", response_model=MessageResponse, tags=["mcp-tools"])
+def mcp_delete_memory(req: MemoryDeleteRequest, _auth=Depends(verify_auth)):
+    """
+    Delete a specific memory by ID. Use when the user explicitly asks to forget a particular fact.
+    Requires auth: X-API-Key header (or Authorization: Bearer <jwt>).
+
+    memory_id must be obtained from a prior search_memories or get_memories call.
+    This action is irreversible.
+    """
+    try:
+        get_memory_instance().delete(memory_id=req.memory_id)
+        return MessageResponse(message="Memory deleted successfully")
+    except Exception:
+        raise upstream_error()
+
+
+@app.post("/mcp-tools/memories/delete-all", summary="Delete all memories (MCP)", operation_id="delete_all_memories", response_model=MessageResponse, tags=["mcp-tools"])
+def mcp_delete_all_memories(req: MemoryDeleteAllRequest, _auth=Depends(verify_auth)):
+    """
+    Delete ALL memories for a given identity. Use only when the user explicitly asks to wipe
+    everything they have stored. This is irreversible.
+    Requires auth: X-API-Key header (or Authorization: Bearer <jwt>).
+
+    Provide at least one identity field: user_id, agent_id, or run_id.
+    """
+    if not any([req.user_id, req.agent_id, req.run_id]):
+        raise HTTPException(status_code=400, detail="At least one identity field is required.")
+    try:
+        params = {k: v for k, v in {"user_id": req.user_id, "agent_id": req.agent_id, "run_id": req.run_id}.items() if v is not None}
+        get_memory_instance().delete_all(**params)
+        return MessageResponse(message="All relevant memories deleted")
+    except Exception:
+        raise upstream_error()
+
+
+@app.post("/mcp-tools/memories/history", summary="Get memory history (MCP)", operation_id="memory_history", tags=["mcp-tools"])
+def mcp_memory_history(req: MemoryHistoryRequest, _auth=Depends(verify_auth)):
+    """
+    Retrieve the full change history of a specific memory: when it was created, how its text
+    evolved, and when it was deleted (if applicable). Use to audit or explain to the user how
+    a memory has changed over time.
+    Requires auth: X-API-Key header (or Authorization: Bearer <jwt>).
+
+    memory_id must be obtained from a prior search_memories or get_memories call.
+    """
+    try:
+        return get_memory_instance().history(memory_id=req.memory_id)
+    except Exception:
+        raise upstream_error()
+
+
+@app.post("/mcp-tools/entities/list", summary="List entities (MCP)", operation_id="list_entities", tags=["mcp-tools"])
+def mcp_list_entities(_auth=Depends(verify_auth)):
+    """
+    List all known entities (users, agents, sessions) that have stored memories, along with
+    their memory counts and timestamps. Use to discover what identity IDs exist before
+    querying or deleting memories for a specific entity.
+    Requires auth: X-API-Key header (or Authorization: Bearer <jwt>).
+
+    Returns an array of entity objects with 'id', 'type' ('user'|'agent'|'run'),
+    'total_memories', 'created_at', and 'updated_at'.
+    """
+    return list_entities_impl()
+
+
+@app.post("/mcp-tools/entities/delete", summary="Delete entity (MCP)", operation_id="delete_entity", response_model=MessageResponse, tags=["mcp-tools"])
+def mcp_delete_entity(req: EntityDeleteRequest, _auth=Depends(verify_auth)):
+    """
+    Delete ALL memories belonging to a specific entity. This removes every memory stored
+    under that user_id, agent_id, or run_id. Use when the user asks to be fully forgotten,
+    or to clean up a stale agent or session.
+    Requires auth: X-API-Key header (or Authorization: Bearer <jwt>).
+
+    entity_type must be 'user', 'agent', or 'run'. entity_id is the identity value.
+    Obtain valid entity IDs from list_entities. This action is irreversible.
+    """
+    try:
+        get_memory_instance().delete_all(**{TYPE_TO_FIELD[req.entity_type]: req.entity_id})
+    except Exception:
+        raise upstream_error()
+    return MessageResponse(message="Entity deleted")
+
+
 mcp = FastApiMCP(
     app,
     name="Mem0 Local MCP",
-    description="Local MCP tools for managing and searching self-hosted Mem0 memories.",
+    description=_MCP_SERVER_DESCRIPTION,
     include_operations=MCP_OPERATION_IDS,
     headers=["authorization", "x-api-key"],
 )
