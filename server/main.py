@@ -313,6 +313,11 @@ async def log_requests(request: Request, call_next):
             )
 
 
+@app.get("/api/health", summary="Health check", include_in_schema=False)
+def health_check():
+    return {"status": "ok"}
+
+
 @app.get("/configure", summary="Get current Mem0 configuration")
 def get_config(_auth=Depends(verify_auth)):
     return _redact_config(get_current_config())
@@ -428,9 +433,15 @@ def get_memory(memory_id: str, _auth=Depends(verify_auth)):
 @app.post("/search", summary="Search memories", operation_id="search_memories")
 def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
     """Search for memories based on a query."""
+    if not any([search_req.user_id, search_req.agent_id, search_req.run_id]):
+        raise HTTPException(status_code=400, detail="At least one identifier (user_id, agent_id, run_id) is required.")
     try:
-        params = {k: v for k, v in search_req.model_dump().items() if v is not None and k != "query"}
-        return get_memory_instance().search(query=search_req.query, **params)
+        entity_keys = {"user_id", "agent_id", "run_id"}
+        filters = {k: v for k, v in search_req.model_dump().items() if k in entity_keys and v is not None}
+        if search_req.filters:
+            filters.update(search_req.filters)
+        params = {k: v for k, v in search_req.model_dump().items() if v is not None and k not in entity_keys | {"query", "filters"}}
+        return get_memory_instance().search(query=search_req.query, filters=filters, **params)
     except Exception:
         raise upstream_error()
 

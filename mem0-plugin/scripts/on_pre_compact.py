@@ -27,7 +27,7 @@ _handler = logging.StreamHandler(sys.stderr)
 _handler.setFormatter(logging.Formatter("[mem0-capture] %(message)s"))
 log.addHandler(_handler)
 
-API_URL = "https://api.mem0.ai"
+API_URL = os.environ.get("MEM0_LOCAL_URL", "http://localhost:8888")
 MAX_TAIL_LINES = 500
 MAX_USER_MESSAGES = 30
 MAX_BASH_COMMANDS = 20
@@ -164,11 +164,11 @@ def store_memory(api_key: str, content: str, user_id: str, source: str) -> bool:
 
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
-        f"{API_URL}/v1/memories/",
+        f"{API_URL}/memories",
         data=data,
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Token {api_key}",
+            "X-API-Key": api_key,
         },
         method="POST",
     )

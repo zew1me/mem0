@@ -27,16 +27,18 @@ if [ -z "$API_KEY" ]; then
   exit 0
 fi
 
+BASE_URL="${MEM0_LOCAL_URL:-http://localhost:8888}"
 USER_ID="${MEM0_USER_ID:-${USER:-default}}"
 
 # Build request body safely via jq to avoid injection
+# user_id must be at the top level — local server validates it there
 BODY=$(jq -n --arg query "$PROMPT" --arg user_id "$USER_ID" \
-  '{query: $query, filters: {user_id: $user_id}, top_k: 5}')
+  '{query: $query, user_id: $user_id, top_k: 5}')
 
 # Search mem0 for memories relevant to this prompt
 RESPONSE=$(curl -s --max-time 3 \
-  -X POST "https://api.mem0.ai/v2/memories/search/" \
-  -H "Authorization: Token $API_KEY" \
+  -X POST "${BASE_URL}/search" \
+  -H "X-API-Key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d "$BODY" \
   2>/dev/null || echo "")
@@ -45,7 +47,7 @@ if [ -z "$RESPONSE" ]; then
   exit 0
 fi
 
-# Extract memories from response (API returns a flat array)
+# Extract memories from response (handles both array and {results:[...]} shapes)
 MEMORIES=$(echo "$RESPONSE" | jq -r '
   if type == "array" then . else .results // [] end |
   if length == 0 then empty else

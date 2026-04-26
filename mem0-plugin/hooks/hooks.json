@@ -62,17 +62,6 @@
           }
         ]
       }
-    ],
-    "TaskCompleted": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/on_task_completed.sh",
-            "timeout": 10
-          }
-        ]
-      }
     ]
   }
 }

@@ -7,6 +7,8 @@ __pycache__/
 # Self-hosted server local runtime state
 server/history/
 server/.env
+server/.bootstrap-output.txt
+server/.smoke-test-response.json
 
 # C extensions
 *.so
@@ -190,3 +192,6 @@ eval/
 qdrant_storage/
 .crossnote
 testing.ipynb
+
+cache
+.serena/project.local.yml
