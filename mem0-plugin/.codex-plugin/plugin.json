@@ -9,7 +9,7 @@
   "homepage": "https://mem0.ai",
   "repository": "https://github.com/mem0ai/mem0",
   "license": "Apache-2.0",
-  "skills": "./skills/",
+  "skills": "./skills/mem0-codex",
   "mcpServers": "./.codex-mcp.json",
   "interface": {
     "displayName": "Mem0",

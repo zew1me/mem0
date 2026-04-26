@@ -1,0 +1,41 @@
+# >>> mem0 codex hooks >>>
+# Managed by mem0-plugin/scripts/install_codex_hooks.py.
+# Re-run that script after moving or updating the plugin install directory.
+#
+# This is a Codex config.toml snippet. The installer replaces the plugin-root
+# placeholder in command values before appending this to ~/.codex/config.toml.
+# Keep [features].codex_hooks in config.toml itself; this file intentionally
+# contains only hook definitions.
+
+[[hooks.SessionStart]]
+matcher = "startup|resume|clear"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "__MEM0_PLUGIN_ROOT__/scripts/codex_session_start.sh"
+statusMessage = "Loading mem0 context..."
+timeout = 30
+
+[[hooks.PreToolUse]]
+matcher = "Edit|Write"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "__MEM0_PLUGIN_ROOT__/scripts/codex_block_memory_write.sh"
+timeout = 10
+
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "__MEM0_PLUGIN_ROOT__/scripts/codex_user_prompt.sh"
+statusMessage = "Searching mem0 memories..."
+timeout = 5
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "python3 __MEM0_PLUGIN_ROOT__/scripts/codex_stop_hook.py"
+timeout = 10
+# <<< mem0 codex hooks <<<

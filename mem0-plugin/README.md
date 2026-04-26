@@ -104,7 +104,13 @@ Add to your Codex MCP config:
 }
 ```
 
-This installs the MCP server and the Mem0 SDK skill. Codex uses the skill-based memory protocol instead of lifecycle hooks.
+This installs the MCP server and the Mem0 SDK skill. For optional Codex lifecycle hooks, run:
+
+```bash
+python3 /path/to/mem0/mem0-plugin/scripts/install_codex_hooks.py
+```
+
+The installer enables `features.codex_hooks`, adds a managed Mem0 hooks block to `~/.codex/config.toml`, validates the final TOML before writing, and creates a backup by default.
 
 ### Cursor
 
