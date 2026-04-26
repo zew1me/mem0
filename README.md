@@ -71,6 +71,9 @@ See the [migration guide](https://docs.mem0.ai/migration/oss-v2-to-v3) for upgra
 
 [Mem0](https://mem0.ai) ("mem-zero") enhances AI assistants and agents with an intelligent memory layer, enabling personalized AI interactions. It remembers user preferences, adapts to individual needs, and continuously learns over time—ideal for customer support chatbots, AI assistants, and autonomous systems.
 
+**THIS FORK**
+This fork is setup so if you run a self hosted server, it has a Fast API MCP built into it. 
+
 ### Key Features & Use Cases
 
 **Core Capabilities:**
