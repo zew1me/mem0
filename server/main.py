@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi_mcp import FastApiMCP
 from pydantic import BaseModel, Field
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -54,6 +55,18 @@ SKIPPED_REQUEST_LOG_PREFIXES = ("/requests",)
 
 BUNDLED_LLM_PROVIDERS = ("openai", "anthropic", "gemini")
 BUNDLED_EMBEDDER_PROVIDERS = ("openai", "gemini")
+MCP_OPERATION_IDS = [
+    "add_memory",
+    "search_memories",
+    "get_memories",
+    "get_memory",
+    "update_memory",
+    "delete_memory",
+    "delete_all_memories",
+    "memory_history",
+    "list_entities",
+    "delete_entity",
+]
 
 
 def _warn_if_unconfigured() -> None:
@@ -345,7 +358,7 @@ def generate_instructions(req: GenerateInstructionsRequest, _auth=Depends(verify
         raise upstream_error()
 
 
-@app.post("/memories", summary="Create memories")
+@app.post("/memories", summary="Create memories", operation_id="add_memory")
 def add_memory(memory_create: MemoryCreate, _auth=Depends(verify_auth)):
     """Store new memories."""
     if not any([memory_create.user_id, memory_create.agent_id, memory_create.run_id]):
@@ -384,7 +397,7 @@ def _list_all_memories(limit: int = ALL_MEMORIES_LIMIT) -> Dict[str, Any]:
     return {"results": [_serialize_memory(row) for row in rows]}
 
 
-@app.get("/memories", summary="Get memories")
+@app.get("/memories", summary="Get memories", operation_id="get_memories")
 def get_all_memories(
     user_id: Optional[str] = None,
     run_id: Optional[str] = None,
@@ -403,7 +416,7 @@ def get_all_memories(
         raise upstream_error()
 
 
-@app.get("/memories/{memory_id}", summary="Get a memory")
+@app.get("/memories/{memory_id}", summary="Get a memory", operation_id="get_memory")
 def get_memory(memory_id: str, _auth=Depends(verify_auth)):
     """Retrieve a specific memory by ID."""
     try:
@@ -412,7 +425,7 @@ def get_memory(memory_id: str, _auth=Depends(verify_auth)):
         raise upstream_error()
 
 
-@app.post("/search", summary="Search memories")
+@app.post("/search", summary="Search memories", operation_id="search_memories")
 def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
     """Search for memories based on a query."""
     try:
@@ -422,7 +435,7 @@ def search_memories(search_req: SearchRequest, _auth=Depends(verify_auth)):
         raise upstream_error()
 
 
-@app.put("/memories/{memory_id}", summary="Update a memory")
+@app.put("/memories/{memory_id}", summary="Update a memory", operation_id="update_memory")
 def update_memory(memory_id: str, updated_memory: MemoryUpdate, _auth=Depends(verify_auth)):
     """Update an existing memory."""
     try:
@@ -433,7 +446,7 @@ def update_memory(memory_id: str, updated_memory: MemoryUpdate, _auth=Depends(ve
         raise upstream_error()
 
 
-@app.get("/memories/{memory_id}/history", summary="Get memory history")
+@app.get("/memories/{memory_id}/history", summary="Get memory history", operation_id="memory_history")
 def memory_history(memory_id: str, _auth=Depends(verify_auth)):
     """Retrieve memory history."""
     try:
@@ -442,7 +455,12 @@ def memory_history(memory_id: str, _auth=Depends(verify_auth)):
         raise upstream_error()
 
 
-@app.delete("/memories/{memory_id}", summary="Delete a memory", response_model=MessageResponse)
+@app.delete(
+    "/memories/{memory_id}",
+    summary="Delete a memory",
+    response_model=MessageResponse,
+    operation_id="delete_memory",
+)
 def delete_memory(memory_id: str, _auth=Depends(verify_auth)):
     """Delete a specific memory by ID."""
     try:
@@ -452,7 +470,12 @@ def delete_memory(memory_id: str, _auth=Depends(verify_auth)):
         raise upstream_error()
 
 
-@app.delete("/memories", summary="Delete all memories", response_model=MessageResponse)
+@app.delete(
+    "/memories",
+    summary="Delete all memories",
+    response_model=MessageResponse,
+    operation_id="delete_all_memories",
+)
 def delete_all_memories(
     user_id: Optional[str] = None,
     run_id: Optional[str] = None,
@@ -486,3 +509,13 @@ def reset_memory(_auth=Depends(verify_auth)):
 def home():
     """Redirect to the OpenAPI documentation."""
     return RedirectResponse(url="/docs")
+
+
+mcp = FastApiMCP(
+    app,
+    name="Mem0 Local MCP",
+    description="Local MCP tools for managing and searching self-hosted Mem0 memories.",
+    include_operations=MCP_OPERATION_IDS,
+    headers=["authorization", "x-api-key"],
+)
+mcp.mount_http()

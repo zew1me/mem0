@@ -41,7 +41,7 @@ def _parse_timestamp(value: Any) -> Optional[datetime]:
         return None
 
 
-@router.get("", response_model=list[Entity])
+@router.get("", response_model=list[Entity], operation_id="list_entities")
 def list_entities(_auth=Depends(verify_auth)):
     buckets: dict[tuple[EntityType, str], dict[str, Any]] = defaultdict(
         lambda: {"total_memories": 0, "created_at": None, "updated_at": None}
@@ -68,7 +68,7 @@ def list_entities(_auth=Depends(verify_auth)):
     ]
 
 
-@router.delete("/{entity_type}/{entity_id}", response_model=MessageResponse)
+@router.delete("/{entity_type}/{entity_id}", response_model=MessageResponse, operation_id="delete_entity")
 def delete_entity(entity_type: EntityType, entity_id: str, _auth=Depends(verify_auth)):
     try:
         get_memory_instance().delete_all(**{TYPE_TO_FIELD[entity_type]: entity_id})
