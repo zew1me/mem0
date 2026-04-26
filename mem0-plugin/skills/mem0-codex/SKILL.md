@@ -11,6 +11,25 @@ description: >
 
 You have access to persistent memory via the mem0 MCP tools. Follow this protocol to maintain context across sessions.
 
+## Install Codex lifecycle hooks
+
+Use this workflow when the user asks to install Mem0 Codex lifecycle hooks or uses the starter prompt "Install Mem0 Codex lifecycle hooks".
+
+1. Locate the Mem0 plugin root. From this skill file, the plugin root is two directories up from `skills/mem0-codex/`.
+2. Run the installer from the plugin root:
+
+```bash
+python3 <mem0-plugin-root>/scripts/install_codex_hooks.py
+```
+
+The installer updates `~/.codex/config.toml`, enables `features.codex_hooks`, appends the managed Mem0 hook block from `hooks/codex-hooks.toml`, validates TOML before writing, and creates a backup by default.
+
+If the user only wants to preview changes, run:
+
+```bash
+python3 <mem0-plugin-root>/scripts/install_codex_hooks.py --dry-run
+```
+
 ## On every new task
 
 1. Call `search_memories` with a query related to the current task or project to load relevant context.

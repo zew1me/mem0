@@ -110,6 +110,12 @@ This installs the MCP server and the Mem0 SDK skill. For optional Codex lifecycl
 python3 /path/to/mem0/mem0-plugin/scripts/install_codex_hooks.py
 ```
 
+Or, after installing the plugin in Codex, use the starter prompt:
+
+```text
+Install Mem0 Codex lifecycle hooks
+```
+
 The installer enables `features.codex_hooks`, adds a managed Mem0 hooks block to `~/.codex/config.toml`, validates the final TOML before writing, and creates a backup by default.
 
 ### Cursor

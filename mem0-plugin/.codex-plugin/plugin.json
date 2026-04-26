@@ -25,9 +25,9 @@
     "privacyPolicyURL": "https://mem0.ai/privacy",
     "termsOfServiceURL": "https://mem0.ai/terms",
     "defaultPrompt": [
+      "Install Mem0 Codex lifecycle hooks",
       "Search my memories for recent project decisions",
-      "Remember that I prefer TypeScript over JavaScript",
-      "What do you know about my coding preferences?"
+      "Remember that I prefer TypeScript over JavaScript"
     ],
     "brandColor": "#FBBF24",
     "logo": "./logo.svg"
