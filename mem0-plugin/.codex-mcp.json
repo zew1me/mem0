@@ -1,8 +1,10 @@
 {
   "mcpServers": {
-    "mem0": {
-      "url": "https://mcp.mem0.ai/mcp/",
-      "bearer_token_env_var": "MEM0_API_KEY"
+    "mem0-local": {
+      "command": "/Users/nigelstuke/Documents/repos/mem0ai/mem0/server/mcp-start.sh",
+      "env": {
+        "MEM0_LOCAL_API_KEY": "$MEM0_LOCAL_API_KEY"
+      }
     }
   }
 }
