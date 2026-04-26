@@ -169,9 +169,9 @@ class TestAddInfer:
 # ===========================================================================
 
 class TestAddMemoryType:
-    """Verify that the memory_type parameter is accepted and forwarded."""
+    """Verify that the memory_type parameter is accepted and normalized."""
 
-    def test_memory_type_forwarded(self, client, mock_memory):
+    def test_core_memory_type_uses_default_memory(self, client, mock_memory):
         resp = client.post("/memories", json={
             "messages": [{"role": "user", "content": "I like pizza"}],
             "user_id": "u1",
@@ -179,7 +179,17 @@ class TestAddMemoryType:
         })
         assert resp.status_code == 200
         _, kwargs = mock_memory.add.call_args
-        assert kwargs["memory_type"] == "core"
+        assert "memory_type" not in kwargs
+
+    def test_procedural_memory_type_forwarded(self, client, mock_memory):
+        resp = client.post("/memories", json={
+            "messages": [{"role": "user", "content": "Create a workflow for triage."}],
+            "agent_id": "a1",
+            "memory_type": "procedural_memory",
+        })
+        assert resp.status_code == 200
+        _, kwargs = mock_memory.add.call_args
+        assert kwargs["memory_type"] == "procedural_memory"
 
     def test_memory_type_omitted(self, client, mock_memory):
         resp = client.post("/memories", json={
@@ -235,7 +245,7 @@ class TestAddAllNewParams:
         assert resp.status_code == 200
         _, kwargs = mock_memory.add.call_args
         assert kwargs["infer"] is False
-        assert kwargs["memory_type"] == "core"
+        assert "memory_type" not in kwargs
         assert kwargs["prompt"] == "Custom extraction prompt."
 
 

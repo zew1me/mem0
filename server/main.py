@@ -222,7 +222,10 @@ class MemoryCreate(BaseModel):
         None,
         description="When True (default), the server extracts discrete facts from messages. Set False to store verbatim.",
     )
-    memory_type: Optional[str] = Field(None, description="Type of memory to store (e.g. 'core').")
+    memory_type: Optional[str] = Field(
+        None,
+        description="Type of memory to store. Use 'core' for default memories or 'procedural_memory'.",
+    )
     prompt: Optional[str] = Field(None, description="Custom prompt to use for fact extraction.")
 
 
@@ -433,6 +436,13 @@ def generate_instructions(req: GenerateInstructionsRequest, _auth=Depends(verify
         raise upstream_error()
 
 
+def _memory_add_params(memory_create: MemoryCreate) -> Dict[str, Any]:
+    params = {k: v for k, v in memory_create.model_dump().items() if v is not None and k != "messages"}
+    if params.get("memory_type") == "core":
+        params.pop("memory_type")
+    return params
+
+
 @app.post("/memories", summary="Create memories", operation_id="add_memory")
 def add_memory(memory_create: MemoryCreate, _auth=Depends(verify_auth)):
     """
@@ -450,7 +460,7 @@ def add_memory(memory_create: MemoryCreate, _auth=Depends(verify_auth)):
     if not any([memory_create.user_id, memory_create.agent_id, memory_create.run_id]):
         raise HTTPException(status_code=400, detail="At least one identifier (user_id, agent_id, run_id) is required.")
 
-    params = {k: v for k, v in memory_create.model_dump().items() if v is not None and k != "messages"}
+    params = _memory_add_params(memory_create)
     try:
         response = get_memory_instance().add(messages=[m.model_dump() for m in memory_create.messages], **params)
         return JSONResponse(content=response)
